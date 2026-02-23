@@ -31,7 +31,7 @@ def guardar_datos(datos):
         print(f"Error crítico al guardar en la nube: {e}")
 
 def main(page: ft.Page):
-    page.title = "Caja Diaria Móvil - Pro (Cloud)"
+    page.title = "REPUESTERA HAFID"
     page.theme_mode = "light"
     page.scroll = "always"
     page.padding = 15
