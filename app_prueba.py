@@ -21,6 +21,7 @@ def cargar_datos():
             }
     except Exception as e:
         print(f"Alerta: No se pudo conectar a la nube. {e}")
+    
     return {"movimientos": [], "gastos": [], "cierres": [], "facturas": []}
 
 def guardar_datos(datos):
@@ -30,15 +31,18 @@ def guardar_datos(datos):
         print(f"Error crítico al guardar en la nube: {e}")
 
 def main(page: ft.Page):
-    page.title = "Repuestera - Sistema Integral"
+    page.title = "Magnum Valores SAS - Gestión Financiera"
     page.theme_mode = "light"
     page.scroll = "always"
-    page.padding = 15
-    
+    page.padding = 20
+    page.window.width = 450 
+    page.window.height = 900
+
     bd = cargar_datos()
     hoy_dt = date.today()
     hoy_str = str(hoy_dt)
     hoy_formateado = datetime.now().strftime("%d/%m/%Y")
+    
     caja_cerrada_hoy = any(c.get("fecha") == hoy_str for c in bd.get("cierres", []))
     rol_actual = None 
 
@@ -48,128 +52,196 @@ def main(page: ft.Page):
         snack.open = True
         page.update()
 
-    # --- CINTA DE TOTALES ---
-    txt_ing_cinta = ft.Text("$0.0", size=20, weight="bold", color="green_700")
-    txt_gas_cinta = ft.Text("$0.0", size=20, weight="bold", color="red_700")
-    txt_saldo_cinta = ft.Text("$0.0", size=20, weight="bold", color="blue_700")
+    # --- CINTA DE TOTALES SUPERIOR ---
+    txt_tot_ingresos = ft.Text("$0.00", size=20, weight="bold", color="green_700")
+    txt_tot_egresos = ft.Text("$0.00", size=20, weight="bold", color="red_700")
+    txt_tot_saldo = ft.Text("$0.00", size=20, weight="bold", color="blue_700")
 
     cinta_totales = ft.Row([
-        ft.Container(ft.Column([ft.Text("INGRESOS", size=10), txt_ing_cinta]), bgcolor="#E8F5E9", padding=10, border_radius=8, expand=True),
-        ft.Container(ft.Column([ft.Text("EGRESOS", size=10), txt_gas_cinta]), bgcolor="#FFEBEE", padding=10, border_radius=8, expand=True),
-        ft.Container(ft.Column([ft.Text("SALDO", size=10, weight="bold"), txt_saldo_cinta]), bgcolor="#E3F2FD", padding=10, border_radius=8, expand=True),
-    ])
+        ft.Card(ft.Container(ft.Column([ft.Text("Ingresos", size=12), txt_tot_ingresos]), padding=10, width=120)),
+        ft.Card(ft.Container(ft.Column([ft.Text("Egresos", size=12), txt_tot_egresos]), padding=10, width=120)),
+        ft.Card(ft.Container(ft.Column([ft.Text("Diferencia", size=12), txt_tot_saldo]), padding=10, width=120))
+    ], alignment="spaceBetween")
 
-    # --- TABLAS OPERATIVAS ---
+    # --- GRILLAS DE DATOS (ESTILO EXCEL) ---
     tabla_ventas = ft.DataTable(
-        columns=[ft.DataColumn(ft.Text("DÍA")), ft.DataColumn(ft.Text("EFECTIVO")), ft.DataColumn(ft.Text("TARJETA")), ft.DataColumn(ft.Text("TOTAL"))],
-        rows=[], column_spacing=10, heading_row_color="#E8F5E9"
+        columns=[
+            ft.DataColumn(ft.Text("Hora")),
+            ft.DataColumn(ft.Text("Concepto")),
+            ft.DataColumn(ft.Text("Medio")),
+            ft.DataColumn(ft.Text("Monto", text_align="right")),
+        ],
+        rows=[]
     )
-    tabla_gastos = ft.DataTable(
-        columns=[ft.DataColumn(ft.Text("FECHA")), ft.DataColumn(ft.Text("CONCEPTO")), ft.DataColumn(ft.Text("PAGO"))],
-        rows=[], column_spacing=10, heading_row_color="#FFEBEE"
+    
+    tabla_egresos = ft.DataTable(
+        columns=[
+            ft.DataColumn(ft.Text("Hora")),
+            ft.DataColumn(ft.Text("Categoría")),
+            ft.DataColumn(ft.Text("Medio")),
+            ft.DataColumn(ft.Text("Monto", text_align="right")),
+        ],
+        rows=[]
     )
 
-    # --- ELEMENTOS DE RESUMEN ADMIN ---
-    txt_fisico_esperado = ft.Text("$0.0", size=24, weight="bold", color="green_700")
-    txt_virtual_esperado = ft.Text("$0.0", size=24, weight="bold", color="blue_700")
-    txt_ganancia_neta = ft.Text("GANANCIA DEL DÍA: $0.0", size=18, weight="bold", color="blue")
-    lista_alertas_ui = ft.Column(spacing=10)
+    # Contenedores con scroll horizontal para evitar errores visuales (restricción técnica)
+    contenedor_tabla_ventas = ft.Row([tabla_ventas], scroll="always")
+    contenedor_tabla_egresos = ft.Row([tabla_egresos], scroll="always")
 
-    def actualizar_resumenes():
-        # Limpiar Tablas
-        tabla_ventas.rows.clear()
-        tabla_gastos.rows.clear()
-        
+    # --- ACTUALIZACIÓN DE INTERFAZ Y LÓGICA DE NEGOCIO ---
+    def actualizar_ui():
+        # Cálculos del día
         movs_hoy = [m for m in bd["movimientos"] if m.get("fecha") == hoy_str and not m.get("anulado")]
         gastos_hoy = [g for g in bd["gastos"] if g.get("fecha") == hoy_str and not g.get("anulado")]
 
-        v_efvo = sum(m.get("monto", 0) for m in movs_hoy if m.get("medio") == "EFECTIVO" and m.get("tipo") == "INGRESO")
-        v_virt = sum(m.get("monto", 0) for m in movs_hoy if m.get("medio") != "EFECTIVO" and m.get("tipo") == "INGRESO")
-        g_tot = sum(g.get("monto", 0) for g in gastos_hoy)
-        
-        # Actualizar Cinta
-        txt_ing_cinta.value = f"${v_efvo + v_virt:,.2f}"
-        txt_gas_cinta.value = f"${g_tot:,.2f}"
-        txt_saldo_cinta.value = f"${(v_efvo + v_virt) - g_tot:,.2f}"
+        tot_ingresos = sum(m.get("monto", 0) for m in movs_hoy)
+        tot_egresos = sum(g.get("monto", 0) for g in gastos_hoy)
+        saldo_neto = tot_ingresos - tot_egresos
 
-        # Llenar Tablas
-        tabla_ventas.rows.append(ft.DataRow([ft.DataCell(ft.Text("HOY")), ft.DataCell(ft.Text(f"${v_efvo:,.2f}")), ft.DataCell(ft.Text(f"${v_virt:,.2f}")), ft.DataCell(ft.Text(f"${v_efvo + v_virt:,.2f}", weight="bold"))]))
-        
-        # Agrupación de Gastos/Retiros
-        agrupados = {}
-        for g in gastos_hoy:
-            cat = g.get("categoria", "VARIOS")
-            agrupados[cat] = agrupados.get(cat, 0) + g.get("monto", 0)
-        for cat, monto in agrupados.items():
-            tabla_gastos.rows.append(ft.DataRow([ft.DataCell(ft.Text(hoy_formateado)), ft.DataCell(ft.Text(cat)), ft.DataCell(ft.Text(f"${monto:,.2f}"))]))
+        txt_tot_ingresos.value = f"${tot_ingresos:,.2f}"
+        txt_tot_egresos.value = f"${tot_egresos:,.2f}"
+        txt_tot_saldo.value = f"${saldo_neto:,.2f}"
+        txt_tot_saldo.color = "blue_700" if saldo_neto >= 0 else "red_700"
 
-        # Panel Admin
-        txt_fisico_esperado.value = f"${v_efvo - sum(g.get('monto', 0) for g in gastos_hoy if g.get('medio') == 'EFECTIVO (Del Cajón)'):,.2f}"
-        txt_ganancia_neta.value = f"GANANCIA DEL DÍA: ${(v_efvo + v_virt) - g_tot:,.2f}"
+        # Llenar grilla de Ventas
+        tabla_ventas.rows.clear()
+        for m in reversed(movs_hoy):
+            tabla_ventas.rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(m.get("hora", ""))),
+                ft.DataCell(ft.Text(m.get("concepto", ""))),
+                ft.DataCell(ft.Text(m.get("medio", ""))),
+                ft.DataCell(ft.Text(f"${m.get('monto', 0):,.2f}", color="green"))
+            ]))
+
+        # Llenar grilla de Egresos con Agrupación Inteligente de Retiros
+        tabla_egresos.rows.clear()
         
-        # Alertas de Facturas
-        lista_alertas_ui.controls.clear()
-        for f in [f for f in bd["facturas"] if f.get("estado") == "PENDIENTE"]:
-            lista_alertas_ui.controls.append(ft.Text(f"⚠️ {f.get('concepto')}: ${f.get('monto'):,.2f}", color="orange"))
+        gastos_normales = [g for g in gastos_hoy if g.get("categoria") != "Retiro de Caja"]
+        retiros = [g for g in gastos_hoy if g.get("categoria") == "Retiro de Caja"]
+        
+        for g in reversed(gastos_normales):
+            detalle = g.get("detalle", "")
+            cat_desc = f"{g.get('categoria')} - {detalle}" if detalle else g.get('categoria')
+            tabla_egresos.rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(g.get("hora", ""))),
+                ft.DataCell(ft.Text(cat_desc)),
+                ft.DataCell(ft.Text(g.get("medio", ""))),
+                ft.DataCell(ft.Text(f"${g.get('monto', 0):,.2f}", color="red"))
+            ]))
+
+        # Agrupación de retiros en una sola línea (si hay)
+        if retiros:
+            total_retiros = sum(r.get("monto", 0) for r in retiros)
+            tabla_egresos.rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text("--:--")),
+                ft.DataCell(ft.Text("RETIROS DE CAJA (Acumulado)", weight="bold")),
+                ft.DataCell(ft.Text("Múltiple")),
+                ft.DataCell(ft.Text(f"${total_retiros:,.2f}", color="orange", weight="bold"))
+            ]))
 
         page.update()
 
-    # --- INPUTS ---
-    inp_ing_monto = ft.TextField(label="Monto Venta ($)", keyboard_type="number")
-    sel_ing_medio = ft.Dropdown(label="Medio:", options=[ft.dropdown.Option("EFECTIVO"), ft.dropdown.Option("TARJETA / VIRTUAL")], value="EFECTIVO")
+    # --- MÓDULO RÁPIDO DE VENTAS ---
+    inp_venta_monto = ft.TextField(label="Monto de la Venta ($)", keyboard_type="number", border_color="green", disabled=caja_cerrada_hoy)
+    sel_venta_medio = ft.Dropdown(options=[ft.dropdown.Option("EFECTIVO"), ft.dropdown.Option("VIRTUAL")], value="EFECTIVO", width=150, disabled=caja_cerrada_hoy)
     
-    sel_gas_tipo = ft.Dropdown(label="Categoría Egreso:", options=[ft.dropdown.Option("Proveedor"), ft.dropdown.Option("Retiro de Caja"), ft.dropdown.Option("Gastos Varios")], value="Proveedor")
-    inp_gas_monto = ft.TextField(label="Monto Egreso ($)", keyboard_type="number")
-    inp_gas_det = ft.TextField(label="Detalle")
-
-    def registrar_ingreso():
+    def registrar_venta(e):
+        if caja_cerrada_hoy: return mostrar_alerta("Caja cerrada.")
+        if not inp_venta_monto.value: return mostrar_alerta("Ingresá un monto.")
         try:
-            monto = float(inp_ing_monto.value)
-            bd["movimientos"].append({"fecha": hoy_str, "hora": datetime.now().strftime('%H:%M'), "concepto": "Venta Mostrador", "monto": monto, "tipo": "INGRESO", "medio": sel_ing_medio.value, "anulado": False})
-            guardar_datos(bd); inp_ing_monto.value = ""; actualizar_resumenes()
-            mostrar_alerta("Venta grabada", "green")
-        except: mostrar_alerta("Monto inválido")
+            monto = float(inp_venta_monto.value)
+            bd["movimientos"].append({
+                "fecha": hoy_str, "hora": datetime.now().strftime('%H:%M'), "usuario": rol_actual,
+                "concepto": "Venta de Mostrador", "monto": monto,
+                "medio": sel_venta_medio.value, "anulado": False
+            })
+            guardar_datos(bd)
+            inp_venta_monto.value = ""
+            actualizar_ui()
+            mostrar_alerta("Venta rápida registrada.", "green")
+        except ValueError:
+            mostrar_alerta("Monto inválido.")
 
-    def registrar_gasto():
+    btn_add_venta = ft.ElevatedButton("Cobrar Venta", on_click=registrar_venta, bgcolor="green", color="white", disabled=caja_cerrada_hoy)
+
+    # --- MÓDULO DISCRIMINADO DE EGRESOS ---
+    sel_gasto_cat = ft.Dropdown(
+        label="Categoría",
+        options=[ft.dropdown.Option("Proveedor"), ft.dropdown.Option("Retiro de Caja"), ft.dropdown.Option("Gastos Varios")],
+        value="Gastos Varios", disabled=caja_cerrada_hoy
+    )
+    inp_gasto_detalle = ft.TextField(label="Detalle Opcional", disabled=caja_cerrada_hoy)
+    inp_gasto_monto = ft.TextField(label="Monto ($)", keyboard_type="number", border_color="red", disabled=caja_cerrada_hoy)
+    sel_gasto_medio = ft.Dropdown(options=[ft.dropdown.Option("EFECTIVO (Del Cajón)"), ft.dropdown.Option("TRANSFERENCIA")], value="EFECTIVO (Del Cajón)", width=200, disabled=caja_cerrada_hoy)
+
+    def registrar_egreso(e):
+        if caja_cerrada_hoy: return mostrar_alerta("Caja cerrada.")
+        if not inp_gasto_monto.value: return mostrar_alerta("El monto es obligatorio.")
         try:
-            monto = float(inp_gas_monto.value)
-            bd["gastos"].append({"fecha": hoy_str, "categoria": sel_gas_tipo.value, "concepto": inp_gas_det.value, "monto": monto, "medio": "EFECTIVO (Del Cajón)", "anulado": False})
-            guardar_datos(bd); inp_gas_monto.value = ""; inp_gas_det.value = ""; actualizar_resumenes()
-            mostrar_alerta("Egreso grabado", "orange")
-        except: mostrar_alerta("Monto inválido")
+            monto = float(inp_gasto_monto.value)
+            bd["gastos"].append({
+                "fecha": hoy_str, "hora": datetime.now().strftime('%H:%M'), "usuario": rol_actual,
+                "categoria": sel_gasto_cat.value, "detalle": inp_gasto_detalle.value,
+                "monto": monto, "medio": sel_gasto_medio.value, "anulado": False
+            })
+            guardar_datos(bd)
+            inp_gasto_monto.value = ""; inp_gasto_detalle.value = ""
+            actualizar_ui()
+            mostrar_alerta("Egreso registrado y sincronizado.", "orange")
+        except ValueError:
+            mostrar_alerta("Monto numérico requerido.")
 
-    # --- VISTAS ---
+    btn_add_gasto = ft.ElevatedButton("Registrar Egreso", on_click=registrar_egreso, bgcolor="red", color="white", disabled=caja_cerrada_hoy)
+
+    # --- SISTEMA DE LOGIN Y VISTAS ---
     vista_operativa = ft.Column([
+        ft.Text("Cinta de Totales del Día", weight="bold"),
         cinta_totales,
-        ft.ResponsiveRow([
-            ft.Column([ft.Text("CARGA VENTAS", weight="bold"), inp_ing_monto, sel_ing_medio, ft.ElevatedButton("GRABAR VENTA", on_click=lambda _: registrar_ingreso(), bgcolor="blue", color="white"), ft.Row([tabla_ventas], scroll="auto")], col={"sm": 12, "md": 6}),
-            ft.Column([ft.Text("CARGA EGRESOS", weight="bold"), sel_gas_tipo, inp_gas_det, inp_gas_monto, ft.ElevatedButton("GRABAR EGRESO", on_click=lambda _: registrar_gasto(), bgcolor="red", color="white"), ft.Row([tabla_gastos], scroll="auto")], col={"sm": 12, "md": 6}),
-        ])
+        ft.Divider(),
+        
+        ft.Text("Módulo Rápido de Ventas", size=18, weight="bold", color="green"),
+        ft.Row([inp_venta_monto, sel_venta_medio]),
+        btn_add_venta,
+        ft.Divider(),
+
+        ft.Text("Módulo Discriminado de Egresos", size=18, weight="bold", color="red"),
+        sel_gasto_cat, inp_gasto_detalle, 
+        ft.Row([inp_gasto_monto, sel_gasto_medio]),
+        btn_add_gasto,
+        ft.Divider(),
+
+        ft.Text("Flujo de Ingresos", weight="bold"),
+        contenedor_tabla_ventas,
+        
+        ft.Text("Detalle de Salidas y Retiros", weight="bold"),
+        contenedor_tabla_egresos
     ], visible=False)
 
-    vista_resumen = ft.Column([
-        ft.Text("PANEL ADMINISTRATIVO", size=20, weight="bold"),
-        ft.Card(ft.Container(ft.Column([ft.Text("EFECTIVO ESPERADO"), txt_fisico_esperado]), padding=15)),
-        ft.Card(ft.Container(ft.Column([ft.Text("ALERTAS"), lista_alertas_ui]), padding=15)),
-        ft.ElevatedButton("EXPORTAR EXCEL", on_click=lambda _: None, bgcolor="green", color="white")
-    ], visible=False)
-
-    barra_nav = ft.Row([
-        ft.ElevatedButton("OPERACIÓN", on_click=lambda _: cambiar_vista(0), expand=True),
-        ft.ElevatedButton("ADMIN", on_click=lambda _: cambiar_vista(1), expand=True),
-    ], visible=False)
-
-    def cambiar_vista(i):
-        vista_operativa.visible = (i == 0); vista_resumen.visible = (i == 1); page.update()
-
-    inp_pin = ft.TextField(label="PIN", password=True, width=200)
-    def acceder(e):
-        if inp_pin.value == "181214":
-            pantalla_login.visible = False; barra_nav.visible = True; vista_operativa.visible = True
-            actualizar_resumenes()
+    inp_pin = ft.TextField(label="PIN Contable", password=True, can_reveal_password=True, width=200, visible=False)
     
-    pantalla_login = ft.Column([ft.Text("SISTEMA MAGNUM", size=24), inp_pin, ft.ElevatedButton("ENTRAR", on_click=acceder)], horizontal_alignment="center")
-    page.add(pantalla_login, barra_nav, vista_operativa, vista_resumen)
+    def loguear(rol):
+        nonlocal rol_actual
+        if rol == "ADMIN":
+            if inp_pin.value != "181214": return mostrar_alerta("PIN incorrecto.")
+        rol_actual = rol
+        pantalla_login.visible = False
+        vista_operativa.visible = True
+        actualizar_ui()
+
+    btn_entrar_admin = ft.ElevatedButton("Entrar al Sistema Contable", on_click=lambda _: loguear("ADMIN"), bgcolor="black", color="white", visible=False)
+
+    pantalla_login = ft.Column([
+        ft.Text("Magnum Valores SAS", size=26, weight="bold", color="blue_900"), 
+        ft.Text("Plataforma de Gestión Integrada", size=14, color="grey"),
+        ft.Divider(),
+        ft.ElevatedButton("Acceso Operativo (Mostrador)", on_click=lambda _: loguear("OPERARIO"), width=300, height=50, bgcolor="blue", color="white"),
+        ft.Container(height=30),
+        ft.ElevatedButton("Acceso Administración", on_click=lambda _: setattr(inp_pin, 'visible', True) or setattr(btn_entrar_admin, 'visible', True) or page.update(), width=300),
+        inp_pin, btn_entrar_admin
+    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
+    page.add(pantalla_login, vista_operativa)
 
 if __name__ == "__main__":
-    ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(os.environ.get("PORT", 8080)), host="0.0.0.0")
+    puerto = int(os.environ.get("PORT", 8080))
+    ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=puerto, host="0.0.0.0")
