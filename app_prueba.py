@@ -1,9 +1,7 @@
 import flet as ft
 import requests
-import json
 import os
 from datetime import datetime, date, timedelta
-import calendar
 
 # --- CONEXIÓN A FIREBASE EN LA NUBE ---
 FIREBASE_URL = "https://cajarepuestos-214aa-default-rtdb.firebaseio.com/caja_repuestos.json"
@@ -16,12 +14,12 @@ def cargar_datos():
             return {
                 "movimientos": data.get("movimientos") or [],
                 "gastos": data.get("gastos") or [],
-                "pendientes": data.get("pendientes") or [] # Para cheques y facturas
+                "facturas_pendientes": data.get("facturas_pendientes") or [] 
             }
     except Exception as e:
         print(f"Alerta: No se pudo conectar a la nube. {e}")
     
-    return {"movimientos": [], "gastos": [], "pendientes": []}
+    return {"movimientos": [], "gastos": [], "facturas_pendientes": []}
 
 def guardar_datos(datos):
     try:
@@ -50,10 +48,13 @@ def main(page: ft.Page):
         snack.open = True
         page.update()
 
-    # --- ELEMENTOS DE CABECERA ---
+    # --- ELEMENTOS VISUALES PRINCIPALES ---
     txt_info_sesion = ft.Text("", size=16, weight="bold", color="blue_900")
     
-    # --- GRILLAS PLANILLA SEMANAL (Estilo Excel) ---
+    # Indicador de Saldo Neto (Ingresos - Egresos)
+    txt_saldo_neto = ft.Text("SALDO NETO SEMANAL: $0.00", size=22, weight="bold", color="blue_700")
+
+    # --- GRILLAS PLANILLA SEMANAL ---
     tabla_semana_ingresos = ft.DataTable(
         columns=[
             ft.DataColumn(ft.Text("DIA", weight="bold")),
@@ -67,8 +68,8 @@ def main(page: ft.Page):
     tabla_semana_egresos = ft.DataTable(
         columns=[
             ft.DataColumn(ft.Text("FECHA", weight="bold")),
-            ft.DataColumn(ft.Text("PROVEEDOR / DETALLE", weight="bold")),
-            ft.DataColumn(ft.Text("PAGO", weight="bold")),
+            ft.DataColumn(ft.Text("CATEGORÍA Y DETALLE", weight="bold")),
+            ft.DataColumn(ft.Text("MONTO", weight="bold")),
         ],
         rows=[], heading_row_color="#FFEBEE"
     )
@@ -81,17 +82,16 @@ def main(page: ft.Page):
     txt_est_mes_anterior = ft.Text("Mes Anterior: $0.00", size=16)
     txt_est_crecimiento = ft.Text("Evolución: 0%", size=16, weight="bold")
     
-    lista_alertas_pendientes = ft.Column(spacing=10)
+    lista_facturas_pendientes = ft.Column(spacing=10)
 
     # --- LÓGICA DE ACTUALIZACIÓN DE VISTAS ---
     def actualizar_ui():
-        # 1. Actualizar Cabecera
         txt_info_sesion.value = f"Operador: {sesion['usuario']} | Turno: {sesion['turno']} | Fecha: {datetime.now().strftime('%d/%m/%Y')}"
         
-        # 2. Lógica Planilla Semanal (Lunes a Sábado)
-        inicio_semana = hoy_dt - timedelta(days=hoy_dt.weekday()) # Lunes
+        inicio_semana = hoy_dt - timedelta(days=hoy_dt.weekday()) # Lunes de esta semana
         dias_nombres = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO"]
         
+        # 1. Procesar Ingresos de la Semana
         tabla_semana_ingresos.rows.clear()
         total_efectivo_sem = 0
         total_tarjeta_sem = 0
@@ -115,35 +115,43 @@ def main(page: ft.Page):
                 ft.DataCell(ft.Text(f"${total_dia:,.2f}", weight="bold"))
             ]))
         
-        # Fila de Totales
+        total_ingresos_sem = total_efectivo_sem + total_tarjeta_sem
         tabla_semana_ingresos.rows.append(ft.DataRow(cells=[
             ft.DataCell(ft.Text("TOTAL SEMANA", weight="bold")),
             ft.DataCell(ft.Text(f"${total_efectivo_sem:,.2f}", color="green", weight="bold")),
             ft.DataCell(ft.Text(f"${total_tarjeta_sem:,.2f}", color="green", weight="bold")),
-            ft.DataCell(ft.Text(f"${(total_efectivo_sem + total_tarjeta_sem):,.2f}", color="blue", weight="bold"))
+            ft.DataCell(ft.Text(f"${total_ingresos_sem:,.2f}", color="blue", weight="bold"))
         ]))
 
-        # Egresos de la Semana
+        # 2. Procesar Egresos de la Semana
         tabla_semana_egresos.rows.clear()
         gastos_semana = [g for g in bd["gastos"] if (inicio_semana <= datetime.strptime(g["fecha"], "%Y-%m-%d").date() <= inicio_semana + timedelta(days=6))]
         total_gastos_sem = 0
         
         for g in gastos_semana:
             fecha_formato = datetime.strptime(g["fecha"], "%Y-%m-%d").strftime("%d/%m")
+            # Combinamos categoría y detalle para la vista de auditoría
+            detalle_completo = f"[{g.get('categoria', '')}] {g.get('detalle', '')}"
+            
             tabla_semana_egresos.rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text(fecha_formato)),
-                ft.DataCell(ft.Text(g.get("proveedor", "Retiro/Gasto"))),
+                ft.DataCell(ft.Text(detalle_completo)),
                 ft.DataCell(ft.Text(f"${g.get('monto', 0):,.2f}", color="red"))
             ]))
             total_gastos_sem += g.get("monto", 0)
             
         tabla_semana_egresos.rows.append(ft.DataRow(cells=[
-            ft.DataCell(ft.Text("GASTO TOTAL SEMANAL", weight="bold")),
+            ft.DataCell(ft.Text("TOTAL EGRESOS SEMANA", weight="bold")),
             ft.DataCell(ft.Text("")),
             ft.DataCell(ft.Text(f"${total_gastos_sem:,.2f}", color="red", weight="bold"))
         ]))
 
-        # 3. Lógica Estadísticas
+        # 3. Calcular Diferencia / Saldo Neto
+        saldo_neto = total_ingresos_sem - total_gastos_sem
+        txt_saldo_neto.value = f"SALDO NETO SEMANAL: ${saldo_neto:,.2f}"
+        txt_saldo_neto.color = "blue_700" if saldo_neto >= 0 else "red_700"
+
+        # 4. Estadísticas
         mes_actual = hoy_dt.month
         año_actual = hoy_dt.year
         mes_anterior = mes_actual - 1 if mes_actual > 1 else 12
@@ -163,45 +171,79 @@ def main(page: ft.Page):
             txt_est_crecimiento.value = "Evolución: N/A (Faltan datos previos)"
             txt_est_crecimiento.color = "grey"
 
-        # 4. Lógica Alertas/Cheques
-        lista_alertas_pendientes.controls.clear()
-        pendientes = [p for p in bd["pendientes"] if p.get("estado") == "PENDIENTE"]
-        if not pendientes:
-            lista_alertas_pendientes.controls.append(ft.Text("✅ No hay cheques ni facturas pendientes.", color="green"))
+        # 5. Tablero de Facturas
+        lista_facturas_pendientes.controls.clear()
+        facturas = [f for f in bd["facturas_pendientes"] if f.get("estado") == "PENDIENTE"]
+        if not facturas:
+            lista_facturas_pendientes.controls.append(ft.Text("✅ No hay facturas de proveedores pendientes.", color="green"))
         
-        for p in pendientes:
+        for f in facturas:
             try:
-                venc_dt = datetime.strptime(p["vencimiento"], "%d/%m/%Y").date()
+                venc_dt = datetime.strptime(f["vencimiento"], "%d/%m/%Y").date()
                 dias_restantes = (venc_dt - hoy_dt).days
+                
                 if dias_restantes < 0:
-                    estado_txt = f"🔴 VENCIDO (hace {abs(dias_restantes)} días)"
+                    estado_txt = f"🔴 VENCIDA (hace {abs(dias_restantes)} días)"
+                    color_bg = "#FFEBEE"
+                elif dias_restantes == 0:
+                    estado_txt = "🔴 VENCE HOY"
                     color_bg = "#FFEBEE"
                 elif dias_restantes <= 3:
                     estado_txt = f"🟡 VENCE PRONTO ({dias_restantes} días)"
                     color_bg = "#FFF3E0"
                 else:
-                    estado_txt = f"🟢 AL DÍA (Vence el {p['vencimiento']})"
+                    estado_txt = f"🟢 AL DÍA (Vence el {f['vencimiento']})"
                     color_bg = "#E8F5E9"
                 
-                def marcar_pagado(e, item=p):
+                def marcar_pagado(e, item=f):
                     item["estado"] = "PAGADO"
                     guardar_datos(bd)
                     actualizar_ui()
-                    mostrar_alerta("Pago registrado con éxito.", "green")
+                    mostrar_alerta("Factura marcada como pagada.", "green")
 
-                lista_alertas_pendientes.controls.append(
+                lista_facturas_pendientes.controls.append(
                     ft.Container(
                         bgcolor=color_bg, padding=10, border_radius=5,
                         content=ft.Column([
-                            ft.Text(f"{p.get('tipo', 'Doc')}: {p.get('concepto')}", weight="bold"),
-                            ft.Text(f"Monto: ${p.get('monto', 0):,.2f} | {estado_txt}"),
-                            ft.TextButton("✅ Marcar como Pagado", on_click=marcar_pagado)
+                            ft.Text(f"Proveedor: {f.get('proveedor')}", weight="bold"),
+                            ft.Text(f"Monto: ${f.get('monto', 0):,.2f} | {estado_txt}"),
+                            ft.TextButton("✅ Marcar como Pagada", on_click=marcar_pagado)
                         ])
                     )
                 )
             except ValueError:
                 pass
 
+        page.update()
+
+    # --- ALERTA EMERGENTE DE VENCIMIENTOS AL LOGUEAR ---
+    def revisar_alertas_emergentes():
+        facturas_criticas = []
+        for f in bd["facturas_pendientes"]:
+            if f.get("estado") == "PENDIENTE":
+                try:
+                    venc_dt = datetime.strptime(f["vencimiento"], "%d/%m/%Y").date()
+                    if venc_dt <= hoy_dt: # Vence hoy o ya está vencida
+                        facturas_criticas.append(f)
+                except ValueError:
+                    pass
+        
+        if facturas_criticas:
+            contenido_alerta = ft.Column([ft.Text("¡Atención! Las siguientes facturas requieren pago inmediato:", weight="bold")])
+            for fc in facturas_criticas:
+                contenido_alerta.controls.append(ft.Text(f"- {fc['proveedor']} por ${fc['monto']:,.2f} (Venc: {fc['vencimiento']})", color="red"))
+            
+            dlg_alerta = ft.AlertDialog(
+                title=ft.Text("⚠️ AVISO DE VENCIMIENTOS", color="red"),
+                content=contenido_alerta,
+                actions=[ft.TextButton("Entendido", on_click=lambda e: cerrar_alerta(dlg_alerta))]
+            )
+            page.overlay.append(dlg_alerta)
+            dlg_alerta.open = True
+            page.update()
+
+    def cerrar_alerta(dialogo):
+        dialogo.open = False
         page.update()
 
     # --- FORMULARIOS DE CARGA ---
@@ -223,63 +265,79 @@ def main(page: ft.Page):
             mostrar_alerta("Ingreso registrado en la planilla.", "green")
         except ValueError: mostrar_alerta("Monto inválido.")
 
-    # Carga de Egreso
-    inp_gasto_prov = ft.TextField(label="Proveedor / Detalle Gasto", border_color="red")
-    inp_gasto_monto = ft.TextField(label="Monto Egreso ($)", keyboard_type="number", border_color="red")
+    # Carga de Egreso con Categorías Estrictas
+    sel_gasto_cat = ft.Dropdown(
+        label="Categoría de Salida", 
+        options=[
+            ft.dropdown.Option("Pago a Proveedor"), 
+            ft.dropdown.Option("Gasto Vario"), 
+            ft.dropdown.Option("Retiro de Caja")
+        ], 
+        value="Pago a Proveedor"
+    )
+    inp_gasto_detalle = ft.TextField(label="Detalle Opcional (Ej: Filtros Mann / Retiro Sergio)", border_color="red")
+    inp_gasto_monto = ft.TextField(label="Monto Salida ($)", keyboard_type="number", border_color="red")
     
     def registrar_gasto(e):
-        if not inp_gasto_monto.value or not inp_gasto_prov.value: return mostrar_alerta("Completá Proveedor y Monto.")
+        if not inp_gasto_monto.value: return mostrar_alerta("El monto es obligatorio.")
         try:
             monto = float(inp_gasto_monto.value)
             bd["gastos"].append({
                 "fecha": hoy_str, "usuario": sesion["usuario"], "turno": sesion["turno"],
-                "proveedor": inp_gasto_prov.value, "monto": monto
+                "categoria": sel_gasto_cat.value, "detalle": inp_gasto_detalle.value, "monto": monto
             })
             guardar_datos(bd)
-            inp_gasto_prov.value = ""; inp_gasto_monto.value = ""
+            inp_gasto_detalle.value = ""; inp_gasto_monto.value = ""
             actualizar_ui()
-            mostrar_alerta("Egreso registrado en la planilla.", "orange")
+            mostrar_alerta("Egreso/Retiro registrado.", "orange")
         except ValueError: mostrar_alerta("Monto inválido.")
 
-    # Carga de Cheques/Alertas
-    sel_tipo_doc = ft.Dropdown(options=[ft.dropdown.Option("Cheque"), ft.dropdown.Option("Factura")], value="Cheque")
-    inp_doc_concepto = ft.TextField(label="Detalle (Ej: Cheque Banco Macro)")
-    inp_doc_monto = ft.TextField(label="Monto ($)", keyboard_type="number")
-    inp_doc_venc = ft.TextField(label="Vencimiento (DD/MM/YYYY)")
+    # Carga de Facturas de Proveedores
+    inp_fac_proveedor = ft.TextField(label="Nombre del Proveedor")
+    inp_fac_monto = ft.TextField(label="Monto de la Factura ($)", keyboard_type="number")
+    inp_fac_venc = ft.TextField(label="Vencimiento (DD/MM/YYYY)")
 
-    def registrar_pendiente(e):
-        if not inp_doc_monto.value or not inp_doc_venc.value: return mostrar_alerta("Monto y Vencimiento obligatorios.")
+    def registrar_factura(e):
+        if not inp_fac_monto.value or not inp_fac_venc.value or not inp_fac_proveedor.value: 
+            return mostrar_alerta("Todos los campos son obligatorios.")
         try:
-            monto = float(inp_doc_monto.value)
-            datetime.strptime(inp_doc_venc.value, "%d/%m/%Y") # Validar formato
-            bd["pendientes"].append({
-                "tipo": sel_tipo_doc.value, "concepto": inp_doc_concepto.value,
-                "monto": monto, "vencimiento": inp_doc_venc.value, "estado": "PENDIENTE",
+            monto = float(inp_fac_monto.value)
+            datetime.strptime(inp_fac_venc.value, "%d/%m/%Y") # Validar formato fecha
+            bd["facturas_pendientes"].append({
+                "proveedor": inp_fac_proveedor.value, "monto": monto, 
+                "vencimiento": inp_fac_venc.value, "estado": "PENDIENTE",
                 "cargado_por": sesion["usuario"]
             })
             guardar_datos(bd)
-            inp_doc_concepto.value = ""; inp_doc_monto.value = ""; inp_doc_venc.value = ""
+            inp_fac_proveedor.value = ""; inp_fac_monto.value = ""; inp_fac_venc.value = ""
             actualizar_ui()
-            mostrar_alerta("Programación guardada con éxito.", "blue")
-        except ValueError: mostrar_alerta("Revisá que el monto sea un número y la fecha DD/MM/YYYY.")
+            mostrar_alerta("Factura guardada para futuras alertas.", "blue")
+        except ValueError: mostrar_alerta("Revisá que el monto sea número y la fecha DD/MM/YYYY.")
 
     # --- VISTAS PRINCIPALES ---
     vista_planilla = ft.Column([
         ft.Row([txt_info_sesion], alignment="center"), ft.Divider(),
         
-        ft.Text("Módulo de Carga Rápida", size=18, weight="bold"),
+        ft.Container(
+            content=ft.Row([txt_saldo_neto], alignment="center"), 
+            bgcolor="#E3F2FD", padding=15, border_radius=10
+        ),
+        ft.Divider(),
+
+        ft.Text("Registro de Caja Fuerte / Mostrador", size=18, weight="bold"),
         ft.Card(ft.Container(padding=10, content=ft.Column([
             ft.Row([inp_venta_monto, sel_venta_medio]),
             ft.ElevatedButton("➕ Agregar Ingreso", on_click=registrar_venta, bgcolor="green", color="white"),
             ft.Divider(),
-            ft.Row([inp_gasto_prov, inp_gasto_monto]),
-            ft.ElevatedButton("➖ Agregar Egreso a Proveedor/Caja", on_click=registrar_gasto, bgcolor="red", color="white")
+            sel_gasto_cat,
+            ft.Row([inp_gasto_detalle, inp_gasto_monto]),
+            ft.ElevatedButton("➖ Extraer / Registrar Salida", on_click=registrar_gasto, bgcolor="red", color="white")
         ]))),
         
         ft.Divider(),
         ft.Text("Planilla Semanal - Ingresos", size=18, weight="bold", color="green_700"),
         contenedor_ingresos,
-        ft.Text("Planilla Semanal - Egresos", size=18, weight="bold", color="red_700"),
+        ft.Text("Planilla Semanal - Egresos (Discriminados)", size=18, weight="bold", color="red_700"),
         contenedor_egresos,
     ], visible=False, scroll="always")
 
@@ -292,29 +350,29 @@ def main(page: ft.Page):
         ft.Text("Nota: Se irán sumando comparativas anuales a medida que se acumulen datos.", size=12, color="grey")
     ], visible=False)
 
-    vista_agenda = ft.Column([
-        ft.Text("Agenda de Cheques y Facturas", size=22, weight="bold", color="orange_900"),
+    vista_proveedores = ft.Column([
+        ft.Text("Gestión de Pago a Proveedores", size=22, weight="bold", color="orange_900"),
         ft.Divider(),
-        ft.Text("Programar Nuevo Pago", weight="bold"),
-        ft.Row([sel_tipo_doc, inp_doc_concepto]),
-        ft.Row([inp_doc_monto, inp_doc_venc]),
-        ft.ElevatedButton("Programar Alerta", on_click=registrar_pendiente, bgcolor="blue", color="white"),
+        ft.Text("Cargar Nueva Factura", weight="bold"),
+        inp_fac_proveedor,
+        ft.Row([inp_fac_monto, inp_fac_venc]),
+        ft.ElevatedButton("Guardar Factura", on_click=registrar_factura, bgcolor="blue", color="white"),
         ft.Divider(),
-        ft.Text("Tablero de Vencimientos Pendientes", weight="bold"),
-        lista_alertas_pendientes
+        ft.Text("Facturas Pendientes de Pago", weight="bold"),
+        lista_facturas_pendientes
     ], visible=False, scroll="always")
 
     # --- NAVEGACIÓN ---
     barra_navegacion = ft.Row([
         ft.ElevatedButton("📊 Planilla", on_click=lambda _: cambiar_vista(0), expand=True),
         ft.ElevatedButton("📈 Estadísticas", on_click=lambda _: cambiar_vista(1), expand=True),
-        ft.ElevatedButton("📅 Agenda", on_click=lambda _: cambiar_vista(2), expand=True)
+        ft.ElevatedButton("🚚 Proveedores", on_click=lambda _: cambiar_vista(2), expand=True)
     ], visible=False)
 
     def cambiar_vista(indice):
         vista_planilla.visible = (indice == 0)
         vista_estadisticas.visible = (indice == 1)
-        vista_agenda.visible = (indice == 2)
+        vista_proveedores.visible = (indice == 2)
         page.update()
 
     # --- PANTALLA DE LOGIN ---
@@ -330,7 +388,7 @@ def main(page: ft.Page):
     
     def loguear(e):
         if not sel_usuario.value or not sel_turno.value: return mostrar_alerta("Elegí usuario y turno.")
-        if inp_clave.value != "181214": return mostrar_alerta("Clave incorrecta.") # Usamos la misma clave por ahora
+        if inp_clave.value != "181214": return mostrar_alerta("Clave incorrecta.")
         
         sesion["usuario"] = sel_usuario.value
         sesion["turno"] = sel_turno.value
@@ -338,7 +396,9 @@ def main(page: ft.Page):
         pantalla_login.visible = False
         barra_navegacion.visible = True
         vista_planilla.visible = True
+        
         actualizar_ui()
+        revisar_alertas_emergentes() # Se dispara la alerta de facturas críticas
 
     btn_entrar = ft.ElevatedButton("Iniciar Sesión", on_click=loguear, width=300, bgcolor="blue_900", color="white")
 
@@ -353,7 +413,7 @@ def main(page: ft.Page):
         btn_entrar
     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
-    page.add(pantalla_login, barra_navegacion, ft.Divider(), vista_planilla, vista_estadisticas, vista_agenda)
+    page.add(pantalla_login, barra_navegacion, ft.Divider(), vista_planilla, vista_estadisticas, vista_proveedores)
 
 if __name__ == "__main__":
     puerto = int(os.environ.get("PORT", 8080))
