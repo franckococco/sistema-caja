@@ -11,7 +11,6 @@ def cargar_datos():
         respuesta = requests.get(FIREBASE_URL, timeout=10)
         if respuesta.status_code == 200:
             data = respuesta.json()
-            # Si Firebase está completamente vacío (null), devolvemos listas vacías
             if data is None:
                 return {"movimientos": [], "gastos": [], "facturas_pendientes": [], "cierres": []}
             return {
@@ -34,6 +33,7 @@ def guardar_datos(datos):
 def main(page: ft.Page):
     page.title = "Repuestera HAFID - Sistema de Gestión"
     page.theme_mode = "light"
+    # El scroll general de la página se encarga de todo el movimiento vertical
     page.scroll = "always"
     page.padding = 20
     page.window.width = 500 
@@ -43,7 +43,6 @@ def main(page: ft.Page):
     hoy_dt = date.today()
     hoy_str = str(hoy_dt)
     
-    # Variables de Sesión
     sesion = {"usuario": "", "fecha": hoy_str}
 
     def mostrar_alerta(mensaje, color="red"):
@@ -55,16 +54,12 @@ def main(page: ft.Page):
     # --- ELEMENTOS VISUALES PRINCIPALES ---
     txt_info_sesion = ft.Text("", size=16, weight="bold", color="blue_900")
     
-    # Indicadores del DÍA
     txt_ingresos_hoy = ft.Text("Ingresos Hoy: $0.00", size=16, color="green_700")
     txt_egresos_hoy = ft.Text("Egresos Hoy: $0.00", size=16, color="red_700")
     txt_saldo_dia = ft.Text("SALDO DEL DÍA (CAJA): $0.00", size=22, weight="bold", color="blue_700")
-    
-    # Indicador de Saldo Neto (Semanal)
     txt_saldo_semana = ft.Text("SALDO NETO SEMANAL: $0.00", size=16, weight="bold")
 
     # --- GRILLAS PLANILLA SEMANAL ---
-    # Se le agrega un ancho a la columna para evitar la distorsión del texto
     tabla_semana_ingresos = ft.DataTable(
         columns=[
             ft.DataColumn(ft.Container(ft.Text("DIA", weight="bold"), width=90)),
@@ -84,8 +79,9 @@ def main(page: ft.Page):
         rows=[], heading_row_color="#FFEBEE"
     )
 
-    contenedor_ingresos = ft.Row([tabla_semana_ingresos], scroll="always")
-    contenedor_egresos = ft.Row([tabla_semana_egresos], scroll="always")
+    # El scroll "auto" solo activa la barra horizontal si la pantalla es muy chica
+    contenedor_ingresos = ft.Row([tabla_semana_ingresos], scroll="auto")
+    contenedor_egresos = ft.Row([tabla_semana_egresos], scroll="auto")
 
     # --- TEXTOS ESTADÍSTICAS ---
     txt_est_mes_actual = ft.Text("Mes Actual: $0.00", size=16, weight="bold", color="green_700")
@@ -98,10 +94,9 @@ def main(page: ft.Page):
     def actualizar_ui():
         txt_info_sesion.value = f"Operador: {sesion['usuario']} | Fecha: {datetime.now().strftime('%d/%m/%Y')}"
         
-        inicio_semana = hoy_dt - timedelta(days=hoy_dt.weekday()) # Lunes de esta semana
+        inicio_semana = hoy_dt - timedelta(days=hoy_dt.weekday()) 
         dias_nombres = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO"]
         
-        # 1. Procesar Ingresos de la Semana y del Día
         tabla_semana_ingresos.rows.clear()
         total_efectivo_sem = 0
         total_tarjeta_sem = 0
@@ -137,7 +132,6 @@ def main(page: ft.Page):
             ft.DataCell(ft.Text(f"${total_ingresos_sem:,.2f}", color="blue", weight="bold"))
         ]))
 
-        # 2. Procesar Egresos de la Semana y del Día
         tabla_semana_egresos.rows.clear()
         gastos_semana = [g for g in bd["gastos"] if (inicio_semana <= datetime.strptime(g["fecha"], "%Y-%m-%d").date() <= inicio_semana + timedelta(days=6))]
         total_gastos_sem = 0
@@ -164,7 +158,6 @@ def main(page: ft.Page):
             ft.DataCell(ft.Text(f"${total_gastos_sem:,.2f}", color="red", weight="bold"))
         ]))
 
-        # 3. Actualizar Indicadores del Día y Semana
         saldo_dia = ingresos_hoy - egresos_hoy
         txt_ingresos_hoy.value = f"Ingresos Hoy: ${ingresos_hoy:,.2f}"
         txt_egresos_hoy.value = f"Egresos Hoy: ${egresos_hoy:,.2f}"
@@ -174,7 +167,6 @@ def main(page: ft.Page):
         saldo_semana = total_ingresos_sem - total_gastos_sem
         txt_saldo_semana.value = f"SALDO NETO SEMANAL: ${saldo_semana:,.2f}"
 
-        # 4. Estadísticas Mensuales
         mes_actual = hoy_dt.month
         año_actual = hoy_dt.year
         mes_anterior = mes_actual - 1 if mes_actual > 1 else 12
@@ -194,7 +186,6 @@ def main(page: ft.Page):
             txt_est_crecimiento.value = "Evolución: N/A (Faltan datos previos)"
             txt_est_crecimiento.color = "grey"
 
-        # 5. Tablero de Facturas
         lista_facturas_pendientes.controls.clear()
         facturas = [f for f in bd["facturas_pendientes"] if f.get("estado") == "PENDIENTE"]
         if not facturas:
@@ -239,7 +230,6 @@ def main(page: ft.Page):
 
         page.update()
 
-    # --- BOTÓN ACTUALIZAR BASE DE DATOS MANUALMENTE ---
     def forzar_sincronizacion(e):
         nonlocal bd
         bd = cargar_datos()
@@ -248,7 +238,6 @@ def main(page: ft.Page):
 
     btn_actualizar = ft.ElevatedButton("🔄 Actualizar Base de Datos", on_click=forzar_sincronizacion, bgcolor="blue_grey_50")
 
-    # --- CIERRE DIARIO ---
     def procesar_cierre_diario(e):
         bd["cierres"].append({
             "fecha": hoy_str,
@@ -263,7 +252,6 @@ def main(page: ft.Page):
         
     btn_cierre_dia = ft.ElevatedButton("🔒 REALIZAR CIERRE DIARIO", on_click=procesar_cierre_diario, bgcolor="black", color="white", width=300)
 
-    # --- ALERTA EMERGENTE DE VENCIMIENTOS AL LOGUEAR ---
     def revisar_alertas_emergentes():
         facturas_criticas = []
         for f in bd["facturas_pendientes"]:
@@ -337,7 +325,6 @@ def main(page: ft.Page):
             mostrar_alerta("Egreso/Retiro registrado.", "orange")
         except ValueError: mostrar_alerta("Monto inválido.")
 
-    # Carga de Facturas de Proveedores
     inp_fac_proveedor = ft.TextField(label="Nombre del Proveedor")
     inp_fac_monto = ft.TextField(label="Monto de la Factura ($)", keyboard_type="number")
     inp_fac_venc = ft.TextField(label="Vencimiento (DD/MM/YYYY)")
@@ -361,10 +348,10 @@ def main(page: ft.Page):
         except ValueError: mostrar_alerta("Revisá que el monto sea número y la fecha DD/MM/YYYY.")
 
     # --- VISTAS PRINCIPALES ---
+    # Se quitó el atributo scroll="always" de las columnas de vista para evitar el choque con page.scroll
     vista_planilla = ft.Column([
         ft.Row([txt_info_sesion, btn_actualizar], alignment="spaceBetween"), ft.Divider(),
         
-        # Panel de Resumen Diario
         ft.Container(
             content=ft.Column([
                 ft.Row([txt_ingresos_hoy, txt_egresos_hoy], alignment="center", spacing=20),
@@ -392,7 +379,7 @@ def main(page: ft.Page):
         contenedor_ingresos,
         ft.Text("Planilla Semanal - Egresos (Discriminados)", size=18, weight="bold", color="red_700"),
         contenedor_egresos,
-    ], visible=False, scroll="always")
+    ], visible=False)
 
     vista_estadisticas = ft.Column([
         ft.Text("Evolución Comercial", size=22, weight="bold", color="blue_900"),
@@ -413,7 +400,7 @@ def main(page: ft.Page):
         ft.Divider(),
         ft.Text("Facturas Pendientes de Pago", weight="bold"),
         lista_facturas_pendientes
-    ], visible=False, scroll="always")
+    ], visible=False)
 
     # --- NAVEGACIÓN ---
     barra_navegacion = ft.Row([
