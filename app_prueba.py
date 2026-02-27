@@ -41,6 +41,7 @@ def main(page: ft.Page):
     hoy_str = str(hoy_dt)
     hoy_formateado = datetime.now().strftime("%d/%m/%Y")
     
+    inicio_semana_dt = hoy_dt - timedelta(days=hoy_dt.weekday()) 
     caja_cerrada_hoy = any(c.get("fecha") == hoy_str for c in bd.get("cierres", []))
     rol_actual = None 
 
@@ -50,24 +51,24 @@ def main(page: ft.Page):
         snack.open = True
         page.update()
 
-    # --- ELEMENTOS DE LA CINTA DE TOTALES (MEJORA VISUAL) ---
-    txt_ingresos_semana = ft.Text("$0.00", size=20, weight="bold", color="green_900")
-    txt_gastos_semana = ft.Text("$0.00", size=20, weight="bold", color="red_900")
-    txt_saldo_semana = ft.Text("$0.00", size=20, weight="bold", color="blue_900")
+    # --- CINTA DE TOTALES (DIFERENCIA/SALDO) ---
+    txt_ingresos_hoy = ft.Text("$0.00", size=20, weight="bold", color="green_900")
+    txt_gastos_hoy = ft.Text("$0.00", size=20, weight="bold", color="red_900")
+    txt_saldo_hoy = ft.Text("$0.00", size=20, weight="bold", color="blue_900")
 
     cinta_totales = ft.Row([
-        ft.Container(ft.Column([ft.Text("INGRESOS (Hoy)", size=12), txt_ingresos_semana]), bgcolor="#E8F5E9", padding=10, border_radius=8, expand=True),
-        ft.Container(ft.Column([ft.Text("EGRESOS (Hoy)", size=12), txt_gastos_semana]), bgcolor="#FFEBEE", padding=10, border_radius=8, expand=True),
-        ft.Container(ft.Column([ft.Text("DIFERENCIA / SALDO", size=12, weight="bold"), txt_saldo_semana]), bgcolor="#E3F2FD", padding=10, border_radius=8, expand=True),
+        ft.Container(ft.Column([ft.Text("INGRESOS (Hoy)", size=12), txt_ingresos_hoy]), bgcolor="#E8F5E9", padding=10, border_radius=8, expand=True),
+        ft.Container(ft.Column([ft.Text("EGRESOS (Hoy)", size=12), txt_gastos_hoy]), bgcolor="#FFEBEE", padding=10, border_radius=8, expand=True),
+        ft.Container(ft.Column([ft.Text("SALDO / DIF.", size=12, weight="bold"), txt_saldo_hoy]), bgcolor="#E3F2FD", padding=10, border_radius=8, expand=True),
     ])
 
     # --- TABLAS ESTILO EXCEL ---
     tabla_ventas = ft.DataTable(
         columns=[
-            ft.DataColumn(ft.Text("DÍA", weight="bold")),
-            ft.DataColumn(ft.Text("EFECTIVO", weight="bold"), numeric=True),
-            ft.DataColumn(ft.Text("TARJETA", weight="bold"), numeric=True),
-            ft.DataColumn(ft.Text("TOTAL", weight="bold", color="blue_900"), numeric=True),
+            ft.DataColumn(label=ft.Text("DÍA", weight="bold")),
+            ft.DataColumn(label=ft.Text("EFECTIVO", weight="bold"), numeric=True),
+            ft.DataColumn(label=ft.Text("TARJETA", weight="bold"), numeric=True),
+            ft.DataColumn(label=ft.Text("TOTAL", weight="bold", color="blue_900"), numeric=True),
         ],
         rows=[],
         column_spacing=15,
@@ -76,124 +77,93 @@ def main(page: ft.Page):
 
     tabla_gastos = ft.DataTable(
         columns=[
-            ft.DataColumn(ft.Text("FECHA", weight="bold")),
-            ft.DataColumn(ft.Text("PROVEEDOR / RETIRO", weight="bold")),
-            ft.DataColumn(ft.Text("PAGO", weight="bold", color="red_900"), numeric=True),
+            ft.DataColumn(label=ft.Text("FECHA", weight="bold")),
+            ft.DataColumn(label=ft.Text("CATEGORÍA / DETALLE", weight="bold")),
+            ft.DataColumn(label=ft.Text("PAGO", weight="bold", color="red_900"), numeric=True),
         ],
         rows=[],
         column_spacing=15,
         heading_row_color="#FFEBEE",
     )
     
-    # --- INPUTS DE CARGA (MODIFICADOS SEGÚN PEDIDO) ---
+    # --- INPUTS DE CARGA ---
     inp_ing_monto = ft.TextField(label="Monto ($)", keyboard_type="number", border_color="blue", disabled=caja_cerrada_hoy)
     sel_ing_medio = ft.Dropdown(label="Cobrado en:", options=[ft.dropdown.Option("EFECTIVO"), ft.dropdown.Option("TARJETA / VIRTUAL")], value="EFECTIVO", disabled=caja_cerrada_hoy)
-    btn_add_ingreso = ft.Button("REGISTRAR VENTA", on_click=lambda _: registrar_ingreso(), disabled=caja_cerrada_hoy, bgcolor="blue", color="white")
+    btn_add_ingreso = ft.ElevatedButton("REGISTRAR VENTA", on_click=lambda _: registrar_ingreso(), disabled=caja_cerrada_hoy, bgcolor="blue", color="white")
 
-    sel_gas_tipo = ft.Dropdown(label="Tipo de Egreso:", options=[ft.dropdown.Option("Proveedor"), ft.dropdown.Option("Retiro de Caja"), ft.dropdown.Option("Gastos Varios")], value="Proveedor", disabled=caja_cerrada_hoy)
+    sel_gas_tipo = ft.Dropdown(label="Categoría:", options=[ft.dropdown.Option("Proveedor"), ft.dropdown.Option("Retiro de Caja"), ft.dropdown.Option("Gastos Varios")], value="Proveedor", disabled=caja_cerrada_hoy)
     inp_gas_detalle = ft.TextField(label="Detalle / Nombre", border_color="red", disabled=caja_cerrada_hoy)
     inp_gas_monto = ft.TextField(label="Pago ($)", keyboard_type="number", border_color="red", disabled=caja_cerrada_hoy)
     sel_gas_medio = ft.Dropdown(label="Salió de:", options=[ft.dropdown.Option("EFECTIVO (Del Cajón)"), ft.dropdown.Option("TRANSFERENCIA / BANCO")], value="EFECTIVO (Del Cajón)", disabled=caja_cerrada_hoy)
-    btn_add_gasto = ft.Button("REGISTRAR EGRESO", on_click=lambda _: registrar_egreso(), disabled=caja_cerrada_hoy, bgcolor="red", color="white")
+    btn_add_gasto = ft.ElevatedButton("REGISTRAR EGRESO", on_click=lambda _: registrar_egreso(), disabled=caja_cerrada_hoy, bgcolor="red", color="white")
 
-    # --- PESTAÑA RESUMEN ADMIN (MANTENIDA) ---
+    # --- PESTAÑA ADMIN ---
     txt_fisico_esperado = ft.Text("$0.0", size=24, weight="bold", color="green_700")
-    txt_virtual_esperado = ft.Text("$0.0", size=24, weight="bold", color="blue_700")
     txt_ganancia_neta = ft.Text("GANANCIA DEL DÍA: $0.0", size=18, weight="bold", color="blue")
-    lista_alertas_ui = ft.Column(spacing=10)
 
     def actualizar_pantallas():
         tabla_ventas.rows.clear()
         tabla_gastos.rows.clear()
         
-        inicio_semana = hoy_dt - timedelta(days=hoy_dt.weekday())
         nombres_dias = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO"]
         total_ingresos_hoy = 0
         total_gastos_hoy = 0
 
-        # Llenar Tabla Ventas (Semana actual)
+        # Llenar Ventas
         for i in range(6):
-            dia_eval = inicio_semana + timedelta(days=i)
+            dia_eval = inicio_semana_dt + timedelta(days=i)
             dia_eval_str = str(dia_eval)
             movs_dia = [m for m in bd["movimientos"] if m.get("fecha") == dia_eval_str and not m.get("anulado") and m.get("tipo") == "INGRESO"]
-            
-            efectivo = sum(m.get("monto", 0) for m in movs_dia if m.get("medio") == "EFECTIVO")
-            tarjeta = sum(m.get("monto", 0) for m in movs_dia if m.get("medio") != "EFECTIVO")
-            total = efectivo + tarjeta
-            
+            ef_sum = sum(m.get("monto", 0) for m in movs_dia if m.get("medio") == "EFECTIVO")
+            ta_sum = sum(m.get("monto", 0) for m in movs_dia if m.get("medio") != "EFECTIVO")
+            total = ef_sum + ta_sum
             if dia_eval_str == hoy_str: total_ingresos_hoy = total
+            tabla_ventas.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(nombres_dias[i])), ft.DataCell(ft.Text(f"${ef_sum:,.2f}")), ft.DataCell(ft.Text(f"${ta_sum:,.2f}")), ft.DataCell(ft.Text(f"${total:,.2f}", weight="bold"))]))
 
-            tabla_ventas.rows.append(ft.DataRow(cells=[
-                ft.DataCell(ft.Text(nombres_dias[i])),
-                ft.DataCell(ft.Text(f"${efectivo:,.2f}" if efectivo > 0 else "-")),
-                ft.DataCell(ft.Text(f"${tarjeta:,.2f}" if tarjeta > 0 else "-")),
-                ft.DataCell(ft.Text(f"${total:,.2f}" if total > 0 else "-", weight="bold", color="blue_700")),
-            ]))
-
-        # Llenar Tabla Gastos (Agrupación de Retiros)
+        # Llenar Gastos (Agrupación de Retiros)
         gastos_hoy = [g for g in bd["gastos"] if g.get("fecha") == hoy_str and not g.get("anulado")]
         gastos_visu = {}
         for g in gastos_hoy:
-            concepto = g.get("categoria", "Gastos Varios")
-            # Si es retiro, agrupamos bajo el mismo nombre para sumar
-            key = concepto if concepto == "Retiro de Caja" else f"{concepto} - {g.get('concepto', '')}"
+            cat = g.get("categoria", "Gastos Varios")
+            key = cat if cat == "Retiro de Caja" else f"{cat} - {g.get('concepto', '')}"
             gastos_visu[key] = gastos_visu.get(key, 0) + g.get("monto", 0)
             total_gastos_hoy += g.get("monto", 0)
 
-        for concepto, monto in gastos_visu.items():
-            tabla_gastos.rows.append(ft.DataRow(cells=[
-                ft.DataCell(ft.Text(hoy_formateado)),
-                ft.DataCell(ft.Text(concepto)),
-                ft.DataCell(ft.Text(f"${monto:,.2f}", color="red_700")),
-            ]))
+        for conc, mont in gastos_visu.items():
+            tabla_gastos.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(hoy_formateado)), ft.DataCell(ft.Text(conc)), ft.DataCell(ft.Text(f"${mont:,.2f}", color="red_700"))]))
 
-        # Actualizar Cinta de Totales
-        txt_ingresos_semana.value = f"${total_ingresos_hoy:,.2f}"
-        txt_gastos_semana.value = f"${total_gastos_hoy:,.2f}"
-        txt_saldo_semana.value = f"${total_ingresos_hoy - total_gastos_hoy:,.2f}"
-
-        # Actualizar Resumen Admin
+        txt_ingresos_hoy.value = f"${total_ingresos_hoy:,.2f}"
+        txt_gastos_hoy.value = f"${total_gastos_hoy:,.2f}"
+        txt_saldo_hoy.value = f"${total_ingresos_hoy - total_gastos_hoy:,.2f}"
+        
+        # Resumen Admin
         movs_validos = [m for m in bd["movimientos"] if m.get("fecha") == hoy_str and not m.get("anulado")]
         v_efvo = sum(m.get("monto", 0) for m in movs_validos if m.get("medio") == "EFECTIVO" and m.get("tipo") == "INGRESO")
         g_efvo = sum(g.get("monto", 0) for g in gastos_hoy if g.get("medio") == "EFECTIVO (Del Cajón)")
         txt_fisico_esperado.value = f"${v_efvo - g_efvo:,.2f}"
         txt_ganancia_neta.value = f"GANANCIA DEL DÍA: ${total_ingresos_hoy - total_gastos_hoy:,.2f}"
-        
         page.update()
 
     def registrar_ingreso():
         try:
             monto = float(inp_ing_monto.value)
-            bd["movimientos"].append({
-                "fecha": hoy_str, "hora": datetime.now().strftime('%H:%M'), "usuario": rol_actual,
-                "concepto": "Venta de Mostrador", "monto": monto,
-                "tipo": "INGRESO", "medio": sel_ing_medio.value, "anulado": False
-            })
-            guardar_datos(bd)
-            inp_ing_monto.value = ""
-            actualizar_pantallas()
-            mostrar_alerta("Venta registrada.", "green")
+            bd["movimientos"].append({"fecha": hoy_str, "hora": datetime.now().strftime('%H:%M'), "usuario": rol_actual, "concepto": "Venta", "monto": monto, "tipo": "INGRESO", "medio": sel_ing_medio.value, "anulado": False})
+            guardar_datos(bd); inp_ing_monto.value = ""; actualizar_pantallas()
+            mostrar_alerta("Venta registrada", "green")
         except: mostrar_alerta("Monto inválido")
 
     def registrar_egreso():
         try:
             monto = float(inp_gas_monto.value)
-            bd["gastos"].append({
-                "fecha": hoy_str, "hora": datetime.now().strftime('%H:%M'), "usuario": rol_actual,
-                "categoria": sel_gas_tipo.value, "concepto": inp_gas_detalle.value, 
-                "monto": monto, "medio": sel_gas_medio.value, "anulado": False
-            })
-            guardar_datos(bd)
-            inp_gas_monto.value = ""; inp_gas_detalle.value = ""
-            actualizar_pantallas()
-            mostrar_alerta("Egreso registrado.", "orange")
+            bd["gastos"].append({"fecha": hoy_str, "hora": datetime.now().strftime('%H:%M'), "usuario": rol_actual, "categoria": sel_gas_tipo.value, "concepto": inp_gas_detalle.value, "monto": monto, "medio": sel_gas_medio.value, "anulado": False})
+            guardar_datos(bd); inp_gas_monto.value = ""; inp_gas_detalle.value = ""; actualizar_pantallas()
+            mostrar_alerta("Egreso registrado", "orange")
         except: mostrar_alerta("Monto inválido")
 
-    # --- DISEÑO DE VISTAS ---
     seccion_ventas = ft.Container(padding=10, bgcolor="#FAFAFA", border_radius=10, content=ft.Column([
         ft.Text("MÓDULO DE VENTAS", size=18, weight="bold", color="blue_900"),
         ft.Row([inp_ing_monto, sel_ing_medio]), btn_add_ingreso, ft.Divider(),
-        ft.Text("📊 FLUJO DE SEMANA", weight="bold"), ft.Row([tabla_ventas], scroll="auto")
+        ft.Text("📊 FLUJO SEMANAL", weight="bold"), ft.Row([tabla_ventas], scroll="auto")
     ]))
 
     seccion_gastos = ft.Container(padding=10, bgcolor="#FAFAFA", border_radius=10, content=ft.Column([
@@ -208,15 +178,14 @@ def main(page: ft.Page):
     ])], visible=False)
 
     vista_resumen = ft.Column([
-        ft.Row([ft.Text("PANEL DE CONTROL ADMIN", size=20, weight="bold"), ft.IconButton(ft.icons.REFRESH, on_click=lambda _: actualizar_pantallas())], alignment="spaceBetween"),
+        ft.Row([ft.Text("CONTROL ADMIN", size=20, weight="bold"), ft.IconButton(ft.icons.AUTORENEW, on_click=lambda _: actualizar_pantallas())], alignment="spaceBetween"),
         ft.Card(content=ft.Container(padding=15, content=ft.Column([ft.Text("📦 EFECTIVO EN CAJÓN", weight="bold"), txt_fisico_esperado]))),
         ft.Card(content=ft.Container(padding=15, content=ft.Column([ft.Text("📊 RENTABILIDAD", weight="bold"), txt_ganancia_neta]))),
-        ft.Row([ft.Button("📊 EXCEL", on_click=lambda _: None, bgcolor="green", color="white"), ft.Button("💾 BACKUP", on_click=lambda _: None, bgcolor="blue", color="white")], alignment="center")
     ], visible=False)
 
     barra_botones = ft.Row([
-        ft.Button("📝 CARGA DATOS", on_click=lambda _: cambiar_vista(0), expand=True, bgcolor="blue", color="white"),
-        ft.Button("📊 ADMIN", on_click=lambda _: cambiar_vista(1), expand=True, bgcolor="green", color="white")
+        ft.ElevatedButton("📝 CARGA DATOS", on_click=lambda _: cambiar_vista(0), expand=True, bgcolor="blue", color="white"),
+        ft.ElevatedButton("📊 ADMIN", on_click=lambda _: cambiar_vista(1), expand=True, bgcolor="green", color="white")
     ], visible=False)
 
     def cambiar_vista(i):
@@ -229,8 +198,7 @@ def main(page: ft.Page):
             actualizar_pantallas(); page.update()
         else: mostrar_alerta("PIN incorrecto")
 
-    pantalla_login = ft.Column([ft.Text("Acceso al Sistema", size=24, weight="bold"), inp_pin, ft.Button("INGRESAR", on_click=loguear)], horizontal_alignment="center")
-
+    pantalla_login = ft.Column([ft.Text("Acceso al Sistema", size=24, weight="bold"), inp_pin, ft.ElevatedButton("INGRESAR", on_click=loguear)], horizontal_alignment="center")
     page.add(pantalla_login, barra_botones, vista_operativa, vista_resumen)
 
 if __name__ == "__main__":
