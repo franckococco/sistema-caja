@@ -51,7 +51,7 @@ def main(page: ft.Page):
         snack.open = True
         page.update()
 
-    # --- CINTA DE TOTALES (DIFERENCIA/SALDO) ---
+    # --- CINTA DE TOTALES (MEJORA SOLICITADA) ---
     txt_ingresos_hoy = ft.Text("$0.00", size=20, weight="bold", color="green_900")
     txt_gastos_hoy = ft.Text("$0.00", size=20, weight="bold", color="red_900")
     txt_saldo_hoy = ft.Text("$0.00", size=20, weight="bold", color="blue_900")
@@ -62,7 +62,7 @@ def main(page: ft.Page):
         ft.Container(ft.Column([ft.Text("SALDO / DIF.", size=12, weight="bold"), txt_saldo_hoy]), bgcolor="#E3F2FD", padding=10, border_radius=8, expand=True),
     ])
 
-    # --- TABLAS ESTILO EXCEL ---
+    # --- TABLAS DE DATOS ---
     tabla_ventas = ft.DataTable(
         columns=[
             ft.DataColumn(label=ft.Text("DÍA", weight="bold")),
@@ -104,12 +104,11 @@ def main(page: ft.Page):
     def actualizar_pantallas():
         tabla_ventas.rows.clear()
         tabla_gastos.rows.clear()
-        
         nombres_dias = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO"]
         total_ingresos_hoy = 0
         total_gastos_hoy = 0
 
-        # Llenar Ventas
+        # Ventas Semanales
         for i in range(6):
             dia_eval = inicio_semana_dt + timedelta(days=i)
             dia_eval_str = str(dia_eval)
@@ -120,7 +119,7 @@ def main(page: ft.Page):
             if dia_eval_str == hoy_str: total_ingresos_hoy = total
             tabla_ventas.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(nombres_dias[i])), ft.DataCell(ft.Text(f"${ef_sum:,.2f}")), ft.DataCell(ft.Text(f"${ta_sum:,.2f}")), ft.DataCell(ft.Text(f"${total:,.2f}", weight="bold"))]))
 
-        # Llenar Gastos (Agrupación de Retiros)
+        # Gastos con Agrupación
         gastos_hoy = [g for g in bd["gastos"] if g.get("fecha") == hoy_str and not g.get("anulado")]
         gastos_visu = {}
         for g in gastos_hoy:
@@ -136,7 +135,7 @@ def main(page: ft.Page):
         txt_gastos_hoy.value = f"${total_gastos_hoy:,.2f}"
         txt_saldo_hoy.value = f"${total_ingresos_hoy - total_gastos_hoy:,.2f}"
         
-        # Resumen Admin
+        # Panel Admin
         movs_validos = [m for m in bd["movimientos"] if m.get("fecha") == hoy_str and not m.get("anulado")]
         v_efvo = sum(m.get("monto", 0) for m in movs_validos if m.get("medio") == "EFECTIVO" and m.get("tipo") == "INGRESO")
         g_efvo = sum(g.get("monto", 0) for g in gastos_hoy if g.get("medio") == "EFECTIVO (Del Cajón)")
@@ -147,7 +146,7 @@ def main(page: ft.Page):
     def registrar_ingreso():
         try:
             monto = float(inp_ing_monto.value)
-            bd["movimientos"].append({"fecha": hoy_str, "hora": datetime.now().strftime('%H:%M'), "usuario": rol_actual, "concepto": "Venta", "monto": monto, "tipo": "INGRESO", "medio": sel_ing_medio.value, "anulado": False})
+            bd["movimientos"].append({"fecha": hoy_str, "hora": datetime.now().strftime('%H:%M'), "usuario": rol_actual, "concepto": "Venta de Mostrador", "monto": monto, "tipo": "INGRESO", "medio": sel_ing_medio.value, "anulado": False})
             guardar_datos(bd); inp_ing_monto.value = ""; actualizar_pantallas()
             mostrar_alerta("Venta registrada", "green")
         except: mostrar_alerta("Monto inválido")
@@ -160,6 +159,7 @@ def main(page: ft.Page):
             mostrar_alerta("Egreso registrado", "orange")
         except: mostrar_alerta("Monto inválido")
 
+    # --- DISEÑO ---
     seccion_ventas = ft.Container(padding=10, bgcolor="#FAFAFA", border_radius=10, content=ft.Column([
         ft.Text("MÓDULO DE VENTAS", size=18, weight="bold", color="blue_900"),
         ft.Row([inp_ing_monto, sel_ing_medio]), btn_add_ingreso, ft.Divider(),
