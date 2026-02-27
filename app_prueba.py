@@ -9,17 +9,21 @@ FIREBASE_URL = "https://cajarepuestos-214aa-default-rtdb.firebaseio.com/caja_rep
 def cargar_datos():
     try:
         respuesta = requests.get(FIREBASE_URL, timeout=10)
-        if respuesta.status_code == 200 and respuesta.json() is not None:
+        if respuesta.status_code == 200:
             data = respuesta.json()
+            # Si Firebase está completamente vacío (null), devolvemos listas vacías
+            if data is None:
+                return {"movimientos": [], "gastos": [], "facturas_pendientes": [], "cierres": []}
             return {
                 "movimientos": data.get("movimientos") or [],
                 "gastos": data.get("gastos") or [],
-                "facturas_pendientes": data.get("facturas_pendientes") or [] 
+                "facturas_pendientes": data.get("facturas_pendientes") or [],
+                "cierres": data.get("cierres") or []
             }
     except Exception as e:
         print(f"Alerta: No se pudo conectar a la nube. {e}")
     
-    return {"movimientos": [], "gastos": [], "facturas_pendientes": []}
+    return {"movimientos": [], "gastos": [], "facturas_pendientes": [], "cierres": []}
 
 def guardar_datos(datos):
     try:
@@ -40,7 +44,7 @@ def main(page: ft.Page):
     hoy_str = str(hoy_dt)
     
     # Variables de Sesión
-    sesion = {"usuario": "", "turno": "", "fecha": hoy_str}
+    sesion = {"usuario": "", "fecha": hoy_str}
 
     def mostrar_alerta(mensaje, color="red"):
         snack = ft.SnackBar(ft.Text(mensaje, color="white"), bgcolor=color)
@@ -51,18 +55,24 @@ def main(page: ft.Page):
     # --- ELEMENTOS VISUALES PRINCIPALES ---
     txt_info_sesion = ft.Text("", size=16, weight="bold", color="blue_900")
     
-    # Indicador de Saldo Neto (Ingresos - Egresos)
-    txt_saldo_neto = ft.Text("SALDO NETO SEMANAL: $0.00", size=22, weight="bold", color="blue_700")
+    # Indicadores del DÍA
+    txt_ingresos_hoy = ft.Text("Ingresos Hoy: $0.00", size=16, color="green_700")
+    txt_egresos_hoy = ft.Text("Egresos Hoy: $0.00", size=16, color="red_700")
+    txt_saldo_dia = ft.Text("SALDO DEL DÍA (CAJA): $0.00", size=22, weight="bold", color="blue_700")
+    
+    # Indicador de Saldo Neto (Semanal)
+    txt_saldo_semana = ft.Text("SALDO NETO SEMANAL: $0.00", size=16, weight="bold")
 
     # --- GRILLAS PLANILLA SEMANAL ---
+    # Se le agrega un ancho a la columna para evitar la distorsión del texto
     tabla_semana_ingresos = ft.DataTable(
         columns=[
-            ft.DataColumn(ft.Text("DIA", weight="bold")),
+            ft.DataColumn(ft.Container(ft.Text("DIA", weight="bold"), width=90)),
             ft.DataColumn(ft.Text("EFECTIVO", weight="bold")),
             ft.DataColumn(ft.Text("TARJETA", weight="bold")),
             ft.DataColumn(ft.Text("TOTAL", weight="bold")),
         ],
-        rows=[], heading_row_color="#E8F5E9"
+        rows=[], heading_row_color="#E8F5E9", column_spacing=15
     )
 
     tabla_semana_egresos = ft.DataTable(
@@ -86,15 +96,16 @@ def main(page: ft.Page):
 
     # --- LÓGICA DE ACTUALIZACIÓN DE VISTAS ---
     def actualizar_ui():
-        txt_info_sesion.value = f"Operador: {sesion['usuario']} | Turno: {sesion['turno']} | Fecha: {datetime.now().strftime('%d/%m/%Y')}"
+        txt_info_sesion.value = f"Operador: {sesion['usuario']} | Fecha: {datetime.now().strftime('%d/%m/%Y')}"
         
         inicio_semana = hoy_dt - timedelta(days=hoy_dt.weekday()) # Lunes de esta semana
         dias_nombres = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO"]
         
-        # 1. Procesar Ingresos de la Semana
+        # 1. Procesar Ingresos de la Semana y del Día
         tabla_semana_ingresos.rows.clear()
         total_efectivo_sem = 0
         total_tarjeta_sem = 0
+        ingresos_hoy = 0
 
         for i in range(6):
             dia_fecha = inicio_semana + timedelta(days=i)
@@ -108,8 +119,11 @@ def main(page: ft.Page):
             total_efectivo_sem += efvo_dia
             total_tarjeta_sem += tarj_dia
 
+            if dia_str == hoy_str:
+                ingresos_hoy = total_dia
+
             tabla_semana_ingresos.rows.append(ft.DataRow(cells=[
-                ft.DataCell(ft.Text(dias_nombres[i])),
+                ft.DataCell(ft.Container(ft.Text(dias_nombres[i]), width=90)),
                 ft.DataCell(ft.Text(f"${efvo_dia:,.2f}")),
                 ft.DataCell(ft.Text(f"${tarj_dia:,.2f}")),
                 ft.DataCell(ft.Text(f"${total_dia:,.2f}", weight="bold"))
@@ -117,41 +131,50 @@ def main(page: ft.Page):
         
         total_ingresos_sem = total_efectivo_sem + total_tarjeta_sem
         tabla_semana_ingresos.rows.append(ft.DataRow(cells=[
-            ft.DataCell(ft.Text("TOTAL SEMANA", weight="bold")),
+            ft.DataCell(ft.Text("TOTAL SEM", weight="bold")),
             ft.DataCell(ft.Text(f"${total_efectivo_sem:,.2f}", color="green", weight="bold")),
             ft.DataCell(ft.Text(f"${total_tarjeta_sem:,.2f}", color="green", weight="bold")),
             ft.DataCell(ft.Text(f"${total_ingresos_sem:,.2f}", color="blue", weight="bold"))
         ]))
 
-        # 2. Procesar Egresos de la Semana
+        # 2. Procesar Egresos de la Semana y del Día
         tabla_semana_egresos.rows.clear()
         gastos_semana = [g for g in bd["gastos"] if (inicio_semana <= datetime.strptime(g["fecha"], "%Y-%m-%d").date() <= inicio_semana + timedelta(days=6))]
         total_gastos_sem = 0
+        egresos_hoy = 0
         
         for g in gastos_semana:
             fecha_formato = datetime.strptime(g["fecha"], "%Y-%m-%d").strftime("%d/%m")
-            # Combinamos categoría y detalle para la vista de auditoría
             detalle_completo = f"[{g.get('categoria', '')}] {g.get('detalle', '')}"
+            monto_gasto = g.get("monto", 0)
             
+            if g.get("fecha") == hoy_str:
+                egresos_hoy += monto_gasto
+
             tabla_semana_egresos.rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text(fecha_formato)),
                 ft.DataCell(ft.Text(detalle_completo)),
-                ft.DataCell(ft.Text(f"${g.get('monto', 0):,.2f}", color="red"))
+                ft.DataCell(ft.Text(f"${monto_gasto:,.2f}", color="red"))
             ]))
-            total_gastos_sem += g.get("monto", 0)
+            total_gastos_sem += monto_gasto
             
         tabla_semana_egresos.rows.append(ft.DataRow(cells=[
-            ft.DataCell(ft.Text("TOTAL EGRESOS SEMANA", weight="bold")),
+            ft.DataCell(ft.Text("TOTAL EGRESOS", weight="bold")),
             ft.DataCell(ft.Text("")),
             ft.DataCell(ft.Text(f"${total_gastos_sem:,.2f}", color="red", weight="bold"))
         ]))
 
-        # 3. Calcular Diferencia / Saldo Neto
-        saldo_neto = total_ingresos_sem - total_gastos_sem
-        txt_saldo_neto.value = f"SALDO NETO SEMANAL: ${saldo_neto:,.2f}"
-        txt_saldo_neto.color = "blue_700" if saldo_neto >= 0 else "red_700"
+        # 3. Actualizar Indicadores del Día y Semana
+        saldo_dia = ingresos_hoy - egresos_hoy
+        txt_ingresos_hoy.value = f"Ingresos Hoy: ${ingresos_hoy:,.2f}"
+        txt_egresos_hoy.value = f"Egresos Hoy: ${egresos_hoy:,.2f}"
+        txt_saldo_dia.value = f"SALDO DEL DÍA (CAJA): ${saldo_dia:,.2f}"
+        txt_saldo_dia.color = "blue_700" if saldo_dia >= 0 else "red_700"
+        
+        saldo_semana = total_ingresos_sem - total_gastos_sem
+        txt_saldo_semana.value = f"SALDO NETO SEMANAL: ${saldo_semana:,.2f}"
 
-        # 4. Estadísticas
+        # 4. Estadísticas Mensuales
         mes_actual = hoy_dt.month
         año_actual = hoy_dt.year
         mes_anterior = mes_actual - 1 if mes_actual > 1 else 12
@@ -216,6 +239,30 @@ def main(page: ft.Page):
 
         page.update()
 
+    # --- BOTÓN ACTUALIZAR BASE DE DATOS MANUALMENTE ---
+    def forzar_sincronizacion(e):
+        nonlocal bd
+        bd = cargar_datos()
+        actualizar_ui()
+        mostrar_alerta("Base de datos actualizada correctamente con la nube.", "blue")
+
+    btn_actualizar = ft.ElevatedButton("🔄 Actualizar Base de Datos", on_click=forzar_sincronizacion, bgcolor="blue_grey_50")
+
+    # --- CIERRE DIARIO ---
+    def procesar_cierre_diario(e):
+        bd["cierres"].append({
+            "fecha": hoy_str,
+            "hora_cierre": datetime.now().strftime('%H:%M'),
+            "cerrado_por": sesion["usuario"],
+            "ingresos_dia": txt_ingresos_hoy.value,
+            "egresos_dia": txt_egresos_hoy.value,
+            "saldo_dia": txt_saldo_dia.value
+        })
+        guardar_datos(bd)
+        mostrar_alerta("Día cerrado y guardado correctamente en la base de datos.", "green")
+        
+    btn_cierre_dia = ft.ElevatedButton("🔒 REALIZAR CIERRE DIARIO", on_click=procesar_cierre_diario, bgcolor="black", color="white", width=300)
+
     # --- ALERTA EMERGENTE DE VENCIMIENTOS AL LOGUEAR ---
     def revisar_alertas_emergentes():
         facturas_criticas = []
@@ -223,7 +270,7 @@ def main(page: ft.Page):
             if f.get("estado") == "PENDIENTE":
                 try:
                     venc_dt = datetime.strptime(f["vencimiento"], "%d/%m/%Y").date()
-                    if venc_dt <= hoy_dt: # Vence hoy o ya está vencida
+                    if venc_dt <= hoy_dt: 
                         facturas_criticas.append(f)
                 except ValueError:
                     pass
@@ -247,7 +294,6 @@ def main(page: ft.Page):
         page.update()
 
     # --- FORMULARIOS DE CARGA ---
-    # Carga de Ingreso
     inp_venta_monto = ft.TextField(label="Monto Ingreso ($)", keyboard_type="number", border_color="green")
     sel_venta_medio = ft.Dropdown(options=[ft.dropdown.Option("EFECTIVO"), ft.dropdown.Option("TARJETA / VIRTUAL")], value="EFECTIVO")
     
@@ -256,7 +302,7 @@ def main(page: ft.Page):
         try:
             monto = float(inp_venta_monto.value)
             bd["movimientos"].append({
-                "fecha": hoy_str, "usuario": sesion["usuario"], "turno": sesion["turno"],
+                "fecha": hoy_str, "usuario": sesion["usuario"],
                 "monto": monto, "medio": sel_venta_medio.value
             })
             guardar_datos(bd)
@@ -265,7 +311,6 @@ def main(page: ft.Page):
             mostrar_alerta("Ingreso registrado en la planilla.", "green")
         except ValueError: mostrar_alerta("Monto inválido.")
 
-    # Carga de Egreso con Categorías Estrictas
     sel_gasto_cat = ft.Dropdown(
         label="Categoría de Salida", 
         options=[
@@ -283,7 +328,7 @@ def main(page: ft.Page):
         try:
             monto = float(inp_gasto_monto.value)
             bd["gastos"].append({
-                "fecha": hoy_str, "usuario": sesion["usuario"], "turno": sesion["turno"],
+                "fecha": hoy_str, "usuario": sesion["usuario"],
                 "categoria": sel_gasto_cat.value, "detalle": inp_gasto_detalle.value, "monto": monto
             })
             guardar_datos(bd)
@@ -302,7 +347,8 @@ def main(page: ft.Page):
             return mostrar_alerta("Todos los campos son obligatorios.")
         try:
             monto = float(inp_fac_monto.value)
-            datetime.strptime(inp_fac_venc.value, "%d/%m/%Y") # Validar formato fecha
+            datetime.strptime(inp_fac_venc.value, "%d/%m/%Y")
+            if "facturas_pendientes" not in bd: bd["facturas_pendientes"] = []
             bd["facturas_pendientes"].append({
                 "proveedor": inp_fac_proveedor.value, "monto": monto, 
                 "vencimiento": inp_fac_venc.value, "estado": "PENDIENTE",
@@ -316,15 +362,22 @@ def main(page: ft.Page):
 
     # --- VISTAS PRINCIPALES ---
     vista_planilla = ft.Column([
-        ft.Row([txt_info_sesion], alignment="center"), ft.Divider(),
+        ft.Row([txt_info_sesion, btn_actualizar], alignment="spaceBetween"), ft.Divider(),
         
+        # Panel de Resumen Diario
         ft.Container(
-            content=ft.Row([txt_saldo_neto], alignment="center"), 
+            content=ft.Column([
+                ft.Row([txt_ingresos_hoy, txt_egresos_hoy], alignment="center", spacing=20),
+                ft.Row([txt_saldo_dia], alignment="center"),
+                ft.Row([btn_cierre_dia], alignment="center"),
+                ft.Divider(),
+                ft.Row([txt_saldo_semana], alignment="center")
+            ]), 
             bgcolor="#E3F2FD", padding=15, border_radius=10
         ),
         ft.Divider(),
 
-        ft.Text("Registro de Caja Fuerte / Mostrador", size=18, weight="bold"),
+        ft.Text("Registro de Caja / Mostrador", size=18, weight="bold"),
         ft.Card(ft.Container(padding=10, content=ft.Column([
             ft.Row([inp_venta_monto, sel_venta_medio]),
             ft.ElevatedButton("➕ Agregar Ingreso", on_click=registrar_venta, bgcolor="green", color="white"),
@@ -380,25 +433,20 @@ def main(page: ft.Page):
         ft.dropdown.Option("Mamá"), ft.dropdown.Option("Julián"), ft.dropdown.Option("Sergio")
     ], width=300)
     
-    sel_turno = ft.Dropdown(label="Turno", options=[
-        ft.dropdown.Option("Mañana"), ft.dropdown.Option("Tarde")
-    ], width=300)
-    
     inp_clave = ft.TextField(label="Clave de Acceso", password=True, can_reveal_password=True, width=300)
     
     def loguear(e):
-        if not sel_usuario.value or not sel_turno.value: return mostrar_alerta("Elegí usuario y turno.")
+        if not sel_usuario.value: return mostrar_alerta("Elegí un usuario.")
         if inp_clave.value != "181214": return mostrar_alerta("Clave incorrecta.")
         
         sesion["usuario"] = sel_usuario.value
-        sesion["turno"] = sel_turno.value
         
         pantalla_login.visible = False
         barra_navegacion.visible = True
         vista_planilla.visible = True
         
         actualizar_ui()
-        revisar_alertas_emergentes() # Se dispara la alerta de facturas críticas
+        revisar_alertas_emergentes() 
 
     btn_entrar = ft.ElevatedButton("Iniciar Sesión", on_click=loguear, width=300, bgcolor="blue_900", color="white")
 
@@ -407,7 +455,6 @@ def main(page: ft.Page):
         ft.Text("Sistema de Gestión y Planilla Diaria", size=16, color="grey"),
         ft.Divider(),
         sel_usuario,
-        sel_turno,
         inp_clave,
         ft.Container(height=10),
         btn_entrar
